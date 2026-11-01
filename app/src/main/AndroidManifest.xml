@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.example.cam2vault">
+    >
 
     <!-- Camera and Audio Permissions -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -17,6 +17,7 @@
 
     <!-- Keep CPU awake when screen turns off during recording -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Hardware Camera Features -->
     <uses-feature
@@ -27,7 +28,6 @@
         android:required="false" />
 
     <application
-        android:name=".Cam2VaultApp"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"

@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.Cam2Vault" parent="android:Theme.Material.NoActionBar" />
+</resources>
