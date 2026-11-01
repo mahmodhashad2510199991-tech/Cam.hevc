@@ -18,55 +18,42 @@ import android.widget.TextView
 import androidx.cardview.widget.CardView
 import kotlin.math.abs
 
-/**
- * Manages the floating 16:9 mini camera preview overlay that displays
- * over other applications (WhatsApp, YouTube, Home Screen, etc.)
- */
 class FloatingPreviewManager(private val context: Context) {
 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var overlayView: View? = null
     private var textureView: TextureView? = null
     private var currentSurface: Surface? = null
-    private var isAttached = false
+    var isAttached = false
+        private set
+
+    // 0: Small (160x90 dp), 1: Medium (240x135 dp), 2: Large (320x180 dp)
+    private var currentSizeIndex = 0
 
     var onRecordClick: (() -> Unit)? = null
     var onSurfaceReady: ((Surface) -> Unit)? = null
     var onSurfaceDestroyed: (() -> Unit)? = null
 
-    fun canDrawOverlays(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Settings.canDrawOverlays(context)
-        } else {
-            true
-        }
-    }
+    fun canDrawOverlays(): Boolean = Settings.canDrawOverlays(context)
 
-    fun requestOverlayPermissionIntent(): Intent {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:${context.packageName}")
-            )
-        } else {
-            Intent()
-        }
-    }
+    fun requestOverlayPermissionIntent(): Intent = Intent(
+        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+        Uri.parse("package:${context.packageName}")
+    )
 
-    /**
-     * Shows a compact 16:9 floating window over all apps.
-     */
     @SuppressLint("ClickableViewAccessibility")
-    fun showFloatingPreview(isLandscape: Boolean = true) {
+    fun showFloatingPreview() {
         if (isAttached || !canDrawOverlays()) return
 
         val dpToPx = { dp: Float ->
             TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, context.resources.displayMetrics).toInt()
         }
 
-        // Exact 16:9 aspect ratio dimensions
-        val widthPx = if (isLandscape) dpToPx(192f) else dpToPx(112f)
-        val heightPx = if (isLandscape) dpToPx(108f) else dpToPx(200f)
+        val dimensions = listOf(
+            Pair(dpToPx(160f), dpToPx(90f)),
+            Pair(dpToPx(240f), dpToPx(135f)),
+            Pair(dpToPx(320f), dpToPx(180f))
+        )
 
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -75,12 +62,12 @@ class FloatingPreviewManager(private val context: Context) {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val (initW, initH) = dimensions[currentSizeIndex]
+
         val params = WindowManager.LayoutParams(
-            widthPx,
-            heightPx,
+            initW, initH,
             layoutType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -89,7 +76,7 @@ class FloatingPreviewManager(private val context: Context) {
         }
 
         val card = CardView(context).apply {
-            radius = dpToPx(14f).toFloat()
+            radius = dpToPx(12f).toFloat()
             cardElevation = dpToPx(8f).toFloat()
             setCardBackgroundColor(Color.BLACK)
         }
@@ -98,7 +85,6 @@ class FloatingPreviewManager(private val context: Context) {
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         }
 
-        // 16:9 TextureView
         textureView = TextureView(context).apply {
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
             surfaceTextureListener = object : TextureView.SurfaceTextureListener {
@@ -107,53 +93,55 @@ class FloatingPreviewManager(private val context: Context) {
                     currentSurface = surface
                     onSurfaceReady?.invoke(surface)
                 }
-
                 override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
-
                 override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
                     onSurfaceDestroyed?.invoke()
                     currentSurface?.release()
                     currentSurface = null
                     return true
                 }
-
                 override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
             }
         }
         rootFrame.addView(textureView)
 
-        // Top mini HUD on floating preview (4K 60FPS badge + REC indicator)
+        // HUD علوي مع زرار للتحكم في الحجم بضغطة زرار
         val hudLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dpToPx(6f), dpToPx(4f), dpToPx(6f), dpToPx(4f))
+            setPadding(dpToPx(8f), dpToPx(4f), dpToPx(8f), dpToPx(4f))
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(Color.parseColor("#99000000"))
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP
-            )
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP)
         }
 
-        val recDot = TextView(context).apply {
-            text = "●"
-            setTextColor(Color.RED)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-            setPadding(0, 0, dpToPx(4f), 0)
-        }
-        val tagText = TextView(context).apply {
-            text = "4K 60FPS 16:9"
+        val sizeBtn = TextView(context).apply {
+            text = "⛶ الحجم"
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            setPadding(0, 0, dpToPx(8f), 0)
+            setOnClickListener {
+                currentSizeIndex = (currentSizeIndex + 1) % dimensions.size
+                val (newW, newH) = dimensions[currentSizeIndex]
+                params.width = newW
+                params.height = newH
+                windowManager.updateViewLayout(overlayView, params)
+            }
         }
-        hudLayout.addView(recDot)
-        hudLayout.addView(tagText)
-        rootFrame.addView(hudLayout)
 
+        val closeBtn = TextView(context).apply {
+            text = "✕"
+            setTextColor(Color.RED)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setOnClickListener { hideFloatingPreview() }
+        }
+
+        hudLayout.addView(sizeBtn)
+        hudLayout.addView(closeBtn)
+        rootFrame.addView(hudLayout)
         card.addView(rootFrame)
         overlayView = card
 
-        // Draggable gesture handling
+        // السحب والتحريك في أي مكان على الشاشة
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
@@ -189,9 +177,8 @@ class FloatingPreviewManager(private val context: Context) {
         try {
             windowManager.addView(overlayView, params)
             isAttached = true
-            Log.i("FloatingPreviewManager", "Floating 16:9 4K preview overlay attached successfully")
         } catch (e: Exception) {
-            Log.e("FloatingPreviewManager", "Failed to add floating preview overlay", e)
+            Log.e("FloatingPreviewManager", "Error adding overlay", e)
         }
     }
 

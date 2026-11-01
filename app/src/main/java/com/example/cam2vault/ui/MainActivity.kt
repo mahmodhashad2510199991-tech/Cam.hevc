@@ -1,10 +1,7 @@
 package com.example.cam2vault.ui
 
 import android.Manifest
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.ServiceConnection
+import android.content.*
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -23,7 +20,6 @@ import androidx.core.content.ContextCompat
 import com.example.cam2vault.camera.Camera2Manager
 import com.example.cam2vault.service.VideoRecordingService
 import com.example.cam2vault.ui.theme.Cam2VaultTheme
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -44,21 +40,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val volumeTriggerReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            recordingService?.let { service ->
+                if (service.recordingState.value.isRecording) {
+                    service.stopRecording()
+                    Toast.makeText(this@MainActivity, "تم إيقاف التسجيل بزرار الصوت", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         camera2Manager = Camera2Manager(this)
 
-        // Bind to background recording service
         Intent(this, VideoRecordingService::class.java).also { intent ->
             bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         }
 
+        val filter = IntentFilter("com.example.cam2vault.ACTION_TOGGLE_RECORD")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(volumeTriggerReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(volumeTriggerReceiver, filter)
+        }
+
         setContent {
             Cam2VaultTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     MainScreenContent(
                         camera2Manager = camera2Manager,
                         getService = { recordingService }
@@ -70,6 +80,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            unregisterReceiver(volumeTriggerReceiver)
+        } catch (_: Exception) {}
         if (isBound) {
             unbindService(serviceConnection)
             isBound = false
@@ -78,21 +91,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * Handles Android 14+ runtime permissions:
- * - CAMERA
- * - RECORD_AUDIO
- * - POST_NOTIFICATIONS (Android 13+ / API 33)
- */
 @Composable
 fun MainScreenContent(
     camera2Manager: Camera2Manager,
     getService: () -> VideoRecordingService?
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var hasPermissions by remember {
-        mutableStateOf(checkAllPermissions(context))
-    }
+    var hasPermissions by remember { mutableStateOf(checkAllPermissions(context)) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -105,16 +110,13 @@ fun MainScreenContent(
 
         hasPermissions = cameraGranted && audioGranted && notifGranted
         if (!hasPermissions) {
-            Toast.makeText(context, "Permissions are required for background recording", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "الكاميرا والمايك ضروريان للتسجيل", Toast.LENGTH_LONG).show()
         }
     }
 
     LaunchedEffect(Unit) {
         if (!hasPermissions) {
-            val required = mutableListOf(
-                Manifest.permission.CAMERA,
-                Manifest.permission.RECORD_AUDIO
-            )
+            val required = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 required.add(Manifest.permission.POST_NOTIFICATIONS)
             }
@@ -123,16 +125,10 @@ fun MainScreenContent(
     }
 
     if (hasPermissions) {
-        CameraScreen(
-            camera2Manager = camera2Manager,
-            getService = getService
-        )
+        CameraScreen(camera2Manager = camera2Manager, getService = getService)
     } else {
         PermissionRequestView(onRequestAgain = {
-            val required = mutableListOf(
-                Manifest.permission.CAMERA,
-                Manifest.permission.RECORD_AUDIO
-            )
+            val required = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 required.add(Manifest.permission.POST_NOTIFICATIONS)
             }
@@ -147,6 +143,5 @@ fun checkAllPermissions(context: Context): Boolean {
     val notif = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
     } else true
-
     return camera && audio && notif
 }
