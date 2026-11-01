@@ -51,6 +51,7 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.activity.compose)
+    implementation("androidx.cardview:cardview:1.0.0")
 
     // Lifecycle & Service
     implementation(libs.androidx.lifecycle.runtime.ktx)
