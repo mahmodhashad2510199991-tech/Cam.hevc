@@ -1,7 +1,10 @@
 package com.example.cam2vault.ui
 
 import android.Manifest
-import android.content.*
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -11,141 +14,171 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.example.cam2vault.camera.Camera2Manager
 import com.example.cam2vault.service.VideoRecordingService
 import com.example.cam2vault.ui.theme.Cam2VaultTheme
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var camera2Manager: Camera2Manager
-    private var recordingService: VideoRecordingService? = null
-    private var isBound = false
+    private var service by mutableStateOf<VideoRecordingService?>(null)
+    private var resumeTick by mutableIntStateOf(0)
+    private var bound = false
 
-    private val serviceConnection = object : ServiceConnection {
+    private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            val localBinder = binder as VideoRecordingService.LocalBinder
-            recordingService = localBinder.getService()
-            isBound = true
+            service = (binder as VideoRecordingService.LocalBinder).getService()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            recordingService = null
-            isBound = false
-        }
-    }
-
-    private val volumeTriggerReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            recordingService?.let { service ->
-                if (service.recordingState.value.isRecording) {
-                    service.stopRecording()
-                    Toast.makeText(this@MainActivity, "تم إيقاف التسجيل بزرار الصوت", Toast.LENGTH_SHORT).show()
-                }
-            }
+            service = null
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        camera2Manager = Camera2Manager(this)
-
-        Intent(this, VideoRecordingService::class.java).also { intent ->
-            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-        }
-
-        val filter = IntentFilter("com.example.cam2vault.ACTION_TOGGLE_RECORD")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(volumeTriggerReceiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(volumeTriggerReceiver, filter)
-        }
-
         setContent {
             Cam2VaultTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    MainScreenContent(
-                        camera2Manager = camera2Manager,
-                        getService = { recordingService }
-                    )
+                    MainScreenContent(service, resumeTick)
                 }
             }
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        try {
-            unregisterReceiver(volumeTriggerReceiver)
-        } catch (_: Exception) {}
-        if (isBound) {
-            unbindService(serviceConnection)
-            isBound = false
+    override fun onStart() {
+        super.onStart()
+        bindService(Intent(this, VideoRecordingService::class.java), connection, Context.BIND_AUTO_CREATE)
+        bound = true
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumeTick++
+    }
+
+    override fun onStop() {
+        service?.attachAppPreview(null)
+        if (bound) {
+            unbindService(connection)
+            bound = false
+            service = null
         }
-        camera2Manager.close()
+        super.onStop()
     }
 }
 
 @Composable
-fun MainScreenContent(
-    camera2Manager: Camera2Manager,
-    getService: () -> VideoRecordingService?
-) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+fun MainScreenContent(service: VideoRecordingService?, resumeTick: Int) {
+    val context = LocalContext.current
     var hasPermissions by remember { mutableStateOf(checkAllPermissions(context)) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        val cameraGranted = results[Manifest.permission.CAMERA] ?: false
-        val audioGranted = results[Manifest.permission.RECORD_AUDIO] ?: false
-        val notifGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            results[Manifest.permission.POST_NOTIFICATIONS] ?: false
-        } else true
-
-        hasPermissions = cameraGranted && audioGranted && notifGranted
+    ) {
+        hasPermissions = checkAllPermissions(context)
         if (!hasPermissions) {
             Toast.makeText(context, "الكاميرا والمايك ضروريان للتسجيل", Toast.LENGTH_LONG).show()
         }
     }
 
-    LaunchedEffect(Unit) {
-        if (!hasPermissions) {
-            val required = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                required.add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            permissionLauncher.launch(required.toTypedArray())
+    fun requestAll() {
+        val required = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            required.add(Manifest.permission.POST_NOTIFICATIONS)
         }
+        permissionLauncher.launch(required.toTypedArray())
+    }
+
+    LaunchedEffect(Unit) {
+        if (!hasPermissions) requestAll()
+    }
+    LaunchedEffect(resumeTick) {
+        hasPermissions = checkAllPermissions(context)
     }
 
     if (hasPermissions) {
-        CameraScreen(camera2Manager = camera2Manager, getService = getService)
+        AppRoot(service, resumeTick)
     } else {
-        PermissionRequestView(onRequestAgain = {
-            val required = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                required.add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            permissionLauncher.launch(required.toTypedArray())
-        })
+        PermissionRequestView(onRequestAgain = { requestAll() })
     }
+}
+
+@Composable
+fun AppRoot(service: VideoRecordingService?, resumeTick: Int) {
+    var tab by remember { mutableIntStateOf(0) }
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    selected = tab == 0, onClick = { tab = 0 },
+                    icon = { Icon(Icons.Default.Videocam, contentDescription = null) },
+                    label = { Text("تسجيل") }
+                )
+                NavigationBarItem(
+                    selected = tab == 1, onClick = { tab = 1 },
+                    icon = { Icon(Icons.Default.PhotoLibrary, contentDescription = null) },
+                    label = { Text("المكتبة") }
+                )
+                NavigationBarItem(
+                    selected = tab == 2, onClick = { tab = 2 },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                    label = { Text("الإعدادات") }
+                )
+            }
+        }
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+            when (tab) {
+                0 -> RecordScreen(service, resumeTick)
+                1 -> LibraryScreen(resumeTick)
+                else -> SettingsScreen(service, resumeTick)
+            }
+        }
+    }
+}
+
+fun checkAllPermissions(context: Context): Boolean {
+    val camera = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    val audio = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    return camera && audio
 }
 
 @Composable
 fun PermissionRequestView(onRequestAgain: () -> Unit) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -156,28 +189,14 @@ fun PermissionRequestView(onRequestAgain: () -> Unit) {
             tint = MaterialTheme.colorScheme.primary
         )
         Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "الأذونات مطلوبة",
-            style = MaterialTheme.typography.headlineSmall
-        )
+        Text(text = "الأذونات مطلوبة", style = MaterialTheme.typography.headlineSmall)
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "يتطلب تطبيق Cam2Vault أذونات الكاميرا والمايك والإشعارات لتسجيل فيديو عالي الدقة في الخلفية بأمان.",
+            text = "يحتاج Cam2Vault إلى إذن الكاميرا والمايك لتسجيل فيديو HEVC عالي الدقة في الخلفية.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = onRequestAgain) {
-            Text("منح الأذونات")
-        }
+        Button(onClick = onRequestAgain) { Text("منح الأذونات") }
     }
-}
-
-fun checkAllPermissions(context: Context): Boolean {
-    val camera = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-    val audio = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-    val notif = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-    } else true
-    return camera && audio && notif
 }
