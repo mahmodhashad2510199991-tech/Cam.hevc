@@ -2,50 +2,49 @@ package com.example.cam2vault.data
 
 import android.net.Uri
 import android.util.Size
-import kotlinx.coroutines.flow.MutableStateFlow
 
-/** A recording mode (resolution + fps) offered to the user. */
+/**
+ * Hardware-validated recording configuration.
+ *
+ * [fpsMin]..[fps] is the exact AE target range that gets sent to the camera
+ * (for constrained high-speed sessions it must be one of the ranges the camera reports).
+ */
 data class VideoConfig(
     val id: String,
     val resolution: Size,
     val fps: Int,
     val bitrate: Int,
     val label: String,
-    val codec: String = "HEVC (H.265)",
+    val useHevc: Boolean = true,
     val isHighSpeed: Boolean = false,
-    /** true = the device does not report this mode; we try it and fall back automatically if it fails. */
-    val experimental: Boolean = false
+    val fpsMin: Int = fps,
+    val withAudio: Boolean = true
 ) {
-    val formattedBitrate: String get() = "${bitrate / 1_000_000} Mbps"
-    val is4K: Boolean get() = resolution.width >= 3840
-    val shortName: String
-        get() {
-            val n = when {
-                resolution.width >= 3840 -> "4K"
-                resolution.width >= 1920 -> "1080p"
-                else -> "720p"
-            }
-            return if (isHighSpeed) "$n ${fps}fps ⚡" else "$n $fps"
-        }
+    val resolutionString: String
+        get() = "${resolution.width}x${resolution.height}"
+
+    val formattedBitrate: String
+        get() = "${bitrate / 1_000_000} Mbps"
+
+    val codecName: String
+        get() = if (useHevc) "HEVC" else "H.264"
+
+    val is4K: Boolean
+        get() = resolution.width >= 3840
 }
 
-data class CameraInfo(val id: String, val label: String, val facing: Int)
-
-data class RecordingState(
-    val isRecording: Boolean = false,
-    val countdown: Int = 0,
-    val elapsedMs: Long = 0L,
-    val fileSizeBytes: Long = 0L,
-    val activeConfig: VideoConfig? = null,
-    val fileName: String? = null,
-    val message: String? = null
+/**
+ * The only two modes the app offers.
+ * [slowMo] is null when the phone does not expose high-speed recording to apps.
+ */
+data class RecordingModes(
+    val uhd60: VideoConfig,
+    val slowMo: VideoConfig?
 )
 
-/** Global recording state shared by the service, the overlay and the UI. */
-object Recorder {
-    val state = MutableStateFlow(RecordingState())
-}
-
+/**
+ * Video item query result from MediaStore.Video.Media
+ */
 data class MediaStoreVideoItem(
     val id: Long,
     val uri: Uri,
